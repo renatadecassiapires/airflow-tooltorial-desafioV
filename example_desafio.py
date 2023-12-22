@@ -5,6 +5,8 @@ from airflow.operators.bash import BashOperator
 from airflow.operators.python import PythonOperator
 from airflow import DAG
 from airflow.models import Variable
+import pandas as pd
+import sqlite3
 
 # These args will get passed on to each operator
 # You can override them on a per-task basis during operator initialization
@@ -38,6 +40,53 @@ def export_final_answer():
     return None
 ## Do not change the code above this line-----------------------##
 
+
+def read_orders_and_save_to_csv():
+    # Conectar ao banco de dados
+    con = sqlite3.connect('data/Northwind_small.sqlite')
+
+    # Ler a tabela 'Order' do banco de dados
+    orders = pd.read_sql_query("SELECT * FROM 'Order'", con)
+
+    # Salvar os dados em um arquivo CSV
+    orders.to_csv('output_orders.csv', index=False)
+
+    # Fechar a conexão com o banco de dados
+    con.close()
+
+
+
+
+
+def join_order_detail_with_csv():
+    # Conectar ao banco de dados
+    con = sqlite3.connect('data/Northwind_small.sqlite')
+
+    # Ler a tabela 'OrderDetail' do banco de dados
+    order_detail = pd.read_sql_query("SELECT * FROM OrderDetail", con)
+
+    # Ler o arquivo 'output_orders.csv' gerado na tarefa anterior
+    orders = pd.read_csv('output_orders.csv')
+
+    # Fazer o JOIN das tabelas
+    merged_data = pd.merge(orders, order_detail, how="inner", left_on="Id", right_on="OrderId")
+
+    # Filtrar por Rio de Janeiro 
+    filtered_df = merged_data.query('ShipCity == "Rio de Janeiro"')
+    
+    # Somar as quantidades de vendas para o Rio de Janeiro
+    count = str(filtered_df['Quantity'].sum())
+
+    # Salvar o resultado em um novo arquivo CSV
+    with open("count.txt", 'w') as f:
+        f.write(count)
+
+    # Fechar a conexão com o banco de dados
+    con.close()
+
+
+
+
 with DAG(
     'DesafioAirflow',
     default_args=default_args,
@@ -51,8 +100,23 @@ with DAG(
         Esse é o desafio de Airflow da Indicium.
     """
    
+    orders_and_save_to_csv = PythonOperator(
+        task_id='orders_and_save_to_csv',
+        python_callable=read_orders_and_save_to_csv,
+        provide_context=True
+   )
+
+    join_order_csv = PythonOperator(
+        task_id='join_order_csv',
+        python_callable=join_order_detail_with_csv,
+        provide_context=True
+    )
+    
     export_final_output = PythonOperator(
         task_id='export_final_output',
         python_callable=export_final_answer,
         provide_context=True
     )
+    
+    
+    orders_and_save_to_csv >> join_order_csv >> export_final_output
